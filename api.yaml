@@ -1,0 +1,742 @@
+openapi: 3.1.0
+info:
+  title: Listing API
+  version: "1.1.0"
+  summary: Public, read-heavy API exposing properties, availability, rates, and token-based booking handoff to power alternative booking sites.
+  description: |
+    This API powers regional/thematic portals and other consumers. It is **read-heavy** and excludes guest PII.
+    New in v1.1: token-based booking handoff (no PII), address masking, image CDN transforms, expanded amenities & accessibility, referral code flow.
+servers:
+  - url: https://api.example.com/v1
+security:
+  - ApiKeyAuth: []
+  - OAuth2ClientCredentials: []
+
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+    OAuth2ClientCredentials:
+      type: oauth2
+      flows:
+        clientCredentials:
+          tokenUrl: https://auth.example.com/oauth/token
+          scopes:
+            listings:read: Read access to listings data.
+            availability:read: Read access to availability data.
+            rates:read: Read access to rate/fees data.
+            webhooks:manage: Create & manage webhook endpoints.
+            bookings:manage: Create holds and initiate checkout.
+
+  parameters:
+    PageLimit:
+      name: limit
+      in: query
+      description: Page size (max 200)
+      schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+    PageCursor:
+      name: cursor
+      in: query
+      description: Opaque pagination cursor
+      schema: { type: string }
+    RegionId:
+      name: region_id
+      in: query
+      description: PMS-enforced single region per property.
+      schema: { type: string }
+    BBox:
+      name: bbox
+      in: query
+      description: Bounding box filter `minLon,minLat,maxLon,maxLat`.
+      schema: { type: string, pattern: "^-?\\d+\\.\\d+,-?\\d+\\.\\d+,-?\\d+\\.\\d+,-?\\d+\\.\\d+$" }
+    GeoRadius:
+      name: near
+      in: query
+      description: Center and radius in meters `lat,lon,radius`.
+      schema: { type: string, pattern: "^-?\\d+\\.\\d+,-?\\d+\\.\\d+,[0-9]+$" }
+    AddressMasking:
+      name: address_masking
+      in: query
+      description: Mask precise address and coordinates for privacy/safety.
+      schema: { type: boolean, default: false }
+    MaskPrecision:
+      name: mask_precision
+      in: query
+      description: Number of decimal places to keep when masking coordinates (0-5).
+      schema: { type: integer, minimum: 0, maximum: 5, default: 2 }
+    CheckIn:
+      name: check_in
+      in: query
+      description: Desired check-in date (YYYY-MM-DD)
+      schema: { type: string, format: date }
+    CheckOut:
+      name: check_out
+      in: query
+      description: Desired check-out date (YYYY-MM-DD)
+      schema: { type: string, format: date }
+    PriceMin:
+      name: price_min
+      in: query
+      schema: { type: number }
+    PriceMax:
+      name: price_max
+      in: query
+      schema: { type: number }
+    Occupancy:
+      name: guests
+      in: query
+      description: Number of guests (adults+children) for eligibility.
+      schema: { type: integer, minimum: 1 }
+    Beds:
+      name: bed_types
+      in: query
+      description: Comma-separated bed types to include (e.g., queen,king,bunk)
+      schema: { type: string }
+    Amenities:
+      name: amenities
+      in: query
+      description: Comma-separated amenity keys (e.g., wifi,hot_tub,parking)
+      schema: { type: string }
+    Accessibility:
+      name: accessibility
+      in: query
+      description: Comma-separated accessibility features (e.g., step_free,grab_rails)
+      schema: { type: string }
+    PetFriendly:
+      name: pets_allowed
+      in: query
+      schema: { type: boolean }
+    MaxPets:
+      name: max_pets
+      in: query
+      schema: { type: integer, minimum: 0 }
+    InstantBook:
+      name: instant_book
+      in: query
+      schema: { type: boolean }
+    CancellationTier:
+      name: cancellation_tier
+      in: query
+      description: one of flexible, moderate, strict, super_strict
+      schema: { type: string, enum: [flexible, moderate, strict, super_strict] }
+    Sort:
+      name: sort
+      in: query
+      description: Sort order.
+      schema:
+        type: string
+        enum: [relevance, price_asc, price_desc, rating_desc, distance_asc, random]
+    Seed:
+      name: seed
+      in: query
+      description: Seed for stable random ordering with `sort=random`.
+      schema: { type: integer }
+    RefCode:
+      name: ref_code
+      in: query
+      description: Optional referral code to attribute checkout.
+      schema: { type: string }
+    ImgW:
+      name: img_w
+      in: query
+      description: Desired max image width (px) for CDN transform.
+      schema: { type: integer, minimum: 16, maximum: 4096 }
+    ImgH:
+      name: img_h
+      in: query
+      description: Desired max image height (px) for CDN transform.
+      schema: { type: integer, minimum: 16, maximum: 4096 }
+    ImgFit:
+      name: img_fit
+      in: query
+      description: Fit mode for CDN transform.
+      schema: { type: string, enum: [cover, contain, fill, inside, outside] }
+    ImgQ:
+      name: img_q
+      in: query
+      description: JPEG/WebP quality (1-100) for CDN transform.
+      schema: { type: integer, minimum: 1, maximum: 100 }
+    ImgDPR:
+      name: img_dpr
+      in: query
+      description: Device pixel ratio multiplier.
+      schema: { type: number, minimum: 0.5, maximum: 4, default: 1 }
+
+  schemas:
+    Money:
+      type: object
+      properties:
+        amount: { type: number, description: "Decimal amount in currency units" }
+        currency: { type: string, description: ISO 4217 code }
+      required: [amount, currency]
+
+    Coordinates:
+      type: object
+      properties:
+        lat: { type: number }
+        lon: { type: number }
+      required: [lat, lon]
+
+    Address:
+      type: object
+      properties:
+        line1: { type: string }
+        line2: { type: string }
+        city: { type: string }
+        region: { type: string, description: "System-enforced single region" }
+        country: { type: string }
+        postal_code: { type: string }
+      required: [line1, city, region, country, postal_code]
+
+    PublicAddress:
+      type: object
+      description: Masked address for public display.
+      properties:
+        city: { type: string }
+        region: { type: string }
+        country: { type: string }
+        postal_code: { type: string }
+        landmark_hint: { type: string, description: "Optional approximate area hint, e.g., ‘near lighthouse’" }
+
+    Photo:
+      type: object
+      properties:
+        url: { type: string, format: uri }
+        caption: { type: string }
+        width: { type: integer }
+        height: { type: integer }
+        order: { type: integer }
+      required: [url]
+
+    Amenity:
+      type: string
+      description: Canonical amenity keys
+      enum: [wifi, parking, on_street_parking, ev_charger, kitchen, kitchenette, laundry, washer, dryer, aircon, heating, heat_pump, hot_tub, spa_pool, spa_bath, pool, fireplace, bbq, ocean_view, mountain_view, garden, patio, balcony, crib, high_chair, workspace, tv, streaming, sky_tv, netflix, disney_plus, board_games, kayak, bike_storage, beach_access, ski_in_ski_out, breakfast_included, linen_included]
+
+    AccessibilityFeature:
+      type: string
+      enum: [step_free, grab_rails, roll_in_shower, shower_seat, wide_doorways, no_stairs, elevator, ramp, lowered_bed, hearing_assist, visual_alarm, accessible_parking]
+
+    BedType:
+      type: string
+      enum: [single, twin, queen, king, super_king, bunk, sofa_bed, futon]
+
+    BedConfig:
+      type: object
+      properties:
+        room_label: { type: string }
+        beds:
+          type: array
+          items:
+            type: object
+            properties:
+              type: { $ref: "#/components/schemas/BedType" }
+              count: { type: integer, minimum: 1 }
+            required: [type, count]
+      required: [beds]
+
+    PetPolicy:
+      type: object
+      properties:
+        allowed: { type: boolean }
+        max_pets: { type: integer, minimum: 0 }
+        fee_type: { type: string, enum: [per_pet_per_night, per_pet_per_booking, per_booking, none] }
+        fee: { $ref: "#/components/schemas/Money" }
+      required: [allowed]
+
+    BookingPolicy:
+      type: object
+      properties:
+        instant_book: { type: boolean }
+        check_in_days: { type: array, items: { type: string, enum: [mon,tue,wed,thu,fri,sat,sun] } }
+        check_out_days: { type: array, items: { type: string, enum: [mon,tue,wed,thu,fri,sat,sun] } }
+        min_stay_nights: { type: integer, minimum: 1 }
+        max_stay_nights: { type: integer, minimum: 1 }
+        buffer_days_before: { type: integer, minimum: 0, description: "Per-property fixed buffer before a booking" }
+        buffer_days_after: { type: integer, minimum: 0 }
+        cancellation_tier: { type: string, enum: [flexible, moderate, strict, super_strict] }
+      required: [instant_book, min_stay_nights]
+
+    Fees:
+      type: object
+      properties:
+        cleaning_fee: { $ref: "#/components/schemas/Money" }
+        additional_guest_fee:
+          type: object
+          properties:
+            applies_after_guests: { type: integer, minimum: 1, description: "Guests included before fee applies" }
+            per_guest_per_night: { $ref: "#/components/schemas/Money" }
+        security_deposit: { $ref: "#/components/schemas/Money" }
+        service_fee: { $ref: "#/components/schemas/Money", description: "If applicable for API consumer" }
+
+    TaxInfo:
+      type: object
+      properties:
+        gst_registered: { type: boolean }
+        gst_number: { type: string }
+      required: [gst_registered]
+
+    Property:
+      type: object
+      properties:
+        id: { type: string }
+        status: { type: string, enum: [active, inactive, suspended, draft] }
+        title: { type: string }
+        summary: { type: string }
+        description: { type: string }
+        address: { $ref: "#/components/schemas/Address" }
+        public_address: { $ref: "#/components/schemas/PublicAddress", description: "Returned when address_masking=true" }
+        coordinates: { $ref: "#/components/schemas/Coordinates", description: "Derived strictly from verified address" }
+        public_coordinates: { $ref: "#/components/schemas/Coordinates", description: "Masked coordinates when address_masking=true with precision control" }
+        region_id: { type: string }
+        type: { type: string, enum: [house, apartment, villa, cabin, motel_room, hotel_room, tiny_home, lodge, cottage, studio] }
+        max_occupancy: { type: integer }
+        bedrooms: { type: integer }
+        bathrooms: { type: number }
+        bed_config: { type: array, items: { $ref: "#/components/schemas/BedConfig" } }
+        amenities: { type: array, items: { $ref: "#/components/schemas/Amenity" } }
+        accessibility: { type: array, items: { $ref: "#/components/schemas/AccessibilityFeature" } }
+        photos: { type: array, items: { $ref: "#/components/schemas/Photo" } }
+        pet_policy: { $ref: "#/components/schemas/PetPolicy" }
+        booking_policy: { $ref: "#/components/schemas/BookingPolicy" }
+        fees: { $ref: "#/components/schemas/Fees" }
+        tax_info: { $ref: "#/components/schemas/TaxInfo" }
+        rating:
+          type: object
+          properties:
+            average: { type: number, minimum: 0, maximum: 5 }
+            count: { type: integer, minimum: 0 }
+        tags: { type: array, items: { type: string }, description: "Free-form labels for thematic sites" }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+      required: [id, status, title, region_id, type, max_occupancy]
+
+    AvailabilityDay:
+      type: object
+      properties:
+        date: { type: string, format: date }
+        available: { type: boolean }
+        min_stay_nights: { type: integer }
+        is_check_in_allowed: { type: boolean }
+        is_check_out_allowed: { type: boolean }
+      required: [date, available]
+
+    AvailabilityCalendar:
+      type: object
+      properties:
+        property_id: { type: string }
+        start_date: { type: string, format: date }
+        end_date: { type: string, format: date }
+        days: { type: array, items: { $ref: "#/components/schemas/AvailabilityDay" } }
+      required: [property_id, start_date, end_date, days]
+
+    Referral:
+      type: object
+      properties:
+        code: { type: string }
+        valid: { type: boolean }
+        type: { type: string, enum: [guest, affiliate, partner] }
+        reward_type: { type: string, enum: [percent_of_booking, fixed_amount] }
+        reward_value: { type: number }
+        note: { type: string }
+
+    RateQuote:
+      type: object
+      properties:
+        property_id: { type: string }
+        check_in: { type: string, format: date }
+        check_out: { type: string, format: date }
+        guests: { type: integer }
+        pets: { type: integer }
+        nightly:
+          type: array
+          items:
+            type: object
+            properties:
+              date: { type: string, format: date }
+              price: { $ref: "#/components/schemas/Money" }
+        fees: { $ref: "#/components/schemas/Fees" }
+        taxes:
+          type: array
+          items:
+            type: object
+            properties:
+              name: { type: string }
+              amount: { $ref: "#/components/schemas/Money" }
+        total: { $ref: "#/components/schemas/Money" }
+        currency: { type: string }
+        ref_code: { type: string }
+        referral_applied: { type: boolean }
+        referral_estimate: { type: number, description: "% of booking or fixed amount, per referral program rules" }
+        hold_token: { type: string, description: "Optional opaque token to hold inventory for short time-to-book" }
+        hold_expires_at: { type: string, format: date-time }
+      required: [property_id, check_in, check_out, guests, total, currency]
+
+    HoldRequest:
+      type: object
+      properties:
+        property_id: { type: string }
+        check_in: { type: string, format: date }
+        check_out: { type: string, format: date }
+        guests: { type: integer, minimum: 1 }
+        pets: { type: integer, minimum: 0 }
+        ref_code: { type: string }
+      required: [property_id, check_in, check_out, guests]
+
+    HoldResponse:
+      type: object
+      properties:
+        hold_token: { type: string }
+        quote: { $ref: "#/components/schemas/RateQuote" }
+        expires_at: { type: string, format: date-time }
+      required: [hold_token, expires_at]
+
+    ConfirmRequest:
+      type: object
+      properties:
+        hold_token: { type: string }
+      required: [hold_token]
+
+    ConfirmResponse:
+      type: object
+      properties:
+        status: { type: string, enum: [redirect] }
+        booking_redirect_url: { type: string, format: uri, description: "Hosted checkout on primary booking engine (PII captured there)" }
+        booking_id: { type: string, description: "Provisional ID for tracking before checkout completes" }
+      required: [status, booking_redirect_url]
+
+    Error:
+      type: object
+      properties:
+        code: { type: string }
+        message: { type: string }
+        request_id: { type: string }
+
+paths:
+  /properties:
+    get:
+      summary: List properties
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - $ref: "#/components/parameters/PageLimit"
+        - $ref: "#/components/parameters/PageCursor"
+        - $ref: "#/components/parameters/RegionId"
+        - $ref: "#/components/parameters/BBox"
+        - $ref: "#/components/parameters/GeoRadius"
+        - $ref: "#/components/parameters/Amenities"
+        - $ref: "#/components/parameters/Accessibility"
+        - $ref: "#/components/parameters/PetFriendly"
+        - $ref: "#/components/parameters/MaxPets"
+        - $ref: "#/components/parameters/Occupancy"
+        - $ref: "#/components/parameters/Beds"
+        - $ref: "#/components/parameters/InstantBook"
+        - $ref: "#/components/parameters/CancellationTier"
+        - $ref: "#/components/parameters/AddressMasking"
+        - $ref: "#/components/parameters/MaskPrecision"
+        - $ref: "#/components/parameters/Sort"
+        - $ref: "#/components/parameters/Seed"
+        - $ref: "#/components/parameters/ImgW"
+        - $ref: "#/components/parameters/ImgH"
+        - $ref: "#/components/parameters/ImgFit"
+        - $ref: "#/components/parameters/ImgQ"
+        - $ref: "#/components/parameters/ImgDPR"
+      responses:
+        '200':
+          description: OK
+          headers:
+            X-RateLimit-Limit: { description: Request limit for the window, schema: { type: integer } }
+            X-RateLimit-Remaining: { description: Remaining requests, schema: { type: integer } }
+            X-RateLimit-Reset: { description: Epoch seconds until reset, schema: { type: integer } }
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/Property" }
+                  next_cursor: { type: string, nullable: true }
+        '400': { description: Bad request, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+
+  /properties/{id}:
+    get:
+      summary: Get property by ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+        - $ref: "#/components/parameters/AddressMasking"
+        - $ref: "#/components/parameters/MaskPrecision"
+        - $ref: "#/components/parameters/ImgW"
+        - $ref: "#/components/parameters/ImgH"
+        - $ref: "#/components/parameters/ImgFit"
+        - $ref: "#/components/parameters/ImgQ"
+        - $ref: "#/components/parameters/ImgDPR"
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Property" } } } }
+        '404': { description: Not found, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+
+  /availability:
+    get:
+      summary: Availability calendar for a property
+      parameters:
+        - name: property_id
+          in: query
+          required: true
+          schema: { type: string }
+        - name: start
+          in: query
+          required: true
+          schema: { type: string, format: date }
+        - name: end
+          in: query
+          required: true
+          schema: { type: string, format: date }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/AvailabilityCalendar" } } } }
+        '400': { description: Bad request, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+
+  /rates/quote:
+    get:
+      summary: Quote total price for a stay
+      parameters:
+        - $ref: "#/components/parameters/CheckIn"
+        - $ref: "#/components/parameters/CheckOut"
+        - name: property_id
+          in: query
+          required: true
+          schema: { type: string }
+        - name: guests
+          in: query
+          required: true
+          schema: { type: integer, minimum: 1 }
+        - name: pets
+          in: query
+          schema: { type: integer, minimum: 0 }
+        - $ref: "#/components/parameters/RefCode"
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/RateQuote" } } } }
+        '409': { description: Dates no longer available, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+
+  /search:
+    get:
+      summary: Search aggregated listings with availability & price filters
+      description: Returns property summaries with computed stay eligibility and price hints.
+      parameters:
+        - $ref: "#/components/parameters/PageLimit"
+        - $ref: "#/components/parameters/PageCursor"
+        - $ref: "#/components/parameters/RegionId"
+        - $ref: "#/components/parameters/BBox"
+        - $ref: "#/components/parameters/GeoRadius"
+        - $ref: "#/components/parameters/CheckIn"
+        - $ref: "#/components/parameters/CheckOut"
+        - $ref: "#/components/parameters/PriceMin"
+        - $ref: "#/components/parameters/PriceMax"
+        - $ref: "#/components/parameters/Occupancy"
+        - $ref: "#/components/parameters/Amenities"
+        - $ref: "#/components/parameters/Accessibility"
+        - $ref: "#/components/parameters/PetFriendly"
+        - $ref: "#/components/parameters/MaxPets"
+        - $ref: "#/components/parameters/Beds"
+        - $ref: "#/components/parameters/InstantBook"
+        - $ref: "#/components/parameters/CancellationTier"
+        - $ref: "#/components/parameters/AddressMasking"
+        - $ref: "#/components/parameters/MaskPrecision"
+        - $ref: "#/components/parameters/Sort"
+        - $ref: "#/components/parameters/Seed"
+        - $ref: "#/components/parameters/ImgW"
+        - $ref: "#/components/parameters/ImgH"
+        - $ref: "#/components/parameters/ImgFit"
+        - $ref: "#/components/parameters/ImgQ"
+        - $ref: "#/components/parameters/ImgDPR"
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        property: { $ref: "#/components/schemas/Property" }
+                        eligible: { type: boolean, description: "Meets date/occupancy/policy constraints" }
+                        price_hint: { $ref: "#/components/schemas/Money", description: "Lowest nightly or average nightly for date range" }
+                        distance_meters: { type: number }
+                  next_cursor: { type: string, nullable: true }
+
+  /bookings/hold:
+    post:
+      summary: Create a short-lived hold token (no PII)
+      description: |
+        Places a temporary hold on inventory and returns a `hold_token` with an attached quote.
+        Use `Idempotency-Key` header to safely retry without double-holding.
+      security:
+        - OAuth2ClientCredentials: [bookings:manage]
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: false
+          description: A unique key to make this request idempotent.
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/HoldRequest" }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: "#/components/schemas/HoldResponse" } } } }
+        '409': { description: Dates no longer available, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+
+  /bookings/confirm:
+    post:
+      summary: Initiate hosted checkout for a hold token (no PII captured here)
+      description: Returns a redirect URL to the primary booking engine where PII and payment are collected.
+      security:
+        - OAuth2ClientCredentials: [bookings:manage]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ConfirmRequest" }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/ConfirmResponse" } } } }
+        '404': { description: Unknown hold token, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        '410': { description: Hold token expired, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+
+  /bookings/release:
+    post:
+      summary: Release a hold token without initiating checkout
+      security:
+        - OAuth2ClientCredentials: [bookings:manage]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                hold_token: { type: string }
+              required: [hold_token]
+      responses:
+        '204': { description: No Content }
+
+  /referrals/validate:
+    get:
+      summary: Validate a referral code
+      parameters:
+        - $ref: "#/components/parameters/RefCode"
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Referral" } } } }
+        '404': { description: Not found, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+
+  /webhooks/endpoints:
+    post:
+      summary: Register a webhook endpoint
+      security:
+        - OAuth2ClientCredentials: [webhooks:manage]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                url: { type: string, format: uri }
+                secret: { type: string, description: "Used to sign events (HMAC SHA-256)" }
+                events:
+                  type: array
+                  items: { type: string, enum: [property.created, property.updated, property.deleted, availability.updated, rates.updated, booking.hold.created, booking.hold.released, booking.checkout.initiated] }
+              required: [url, events]
+      responses:
+        '201': { description: Created }
+    get:
+      summary: List webhook endpoints
+      security:
+        - OAuth2ClientCredentials: [webhooks:manage]
+      responses:
+        '200': { description: OK }
+
+  /webhooks/test:
+    post:
+      summary: Send a ping/test event to a webhook URL
+      security:
+        - OAuth2ClientCredentials: [webhooks:manage]
+      responses:
+        '204': { description: No Content }
+
+x-events:
+  description: Webhook event payloads signed with `X-Signature: sha256=...`.
+  property.created:
+    example:
+      id: evt_123
+      type: property.created
+      created_at: 2025-08-30T00:00:00Z
+      data: { property_id: prop_abc }
+  property.updated:
+    example:
+      id: evt_124
+      type: property.updated
+      created_at: 2025-08-30T00:05:00Z
+      data: { property_id: prop_abc, changed_fields: [title, photos] }
+  property.deleted:
+    example:
+      id: evt_125
+      type: property.deleted
+      created_at: 2025-08-30T00:10:00Z
+      data: { property_id: prop_abc }
+  availability.updated:
+    example:
+      id: evt_126
+      type: availability.updated
+      created_at: 2025-08-30T00:15:00Z
+      data: { property_id: prop_abc, start: 2025-09-01, end: 2025-09-30 }
+  rates.updated:
+    example:
+      id: evt_127
+      type: rates.updated
+      created_at: 2025-08-30T00:20:00Z
+      data: { property_id: prop_abc, effective_from: 2025-09-01 }
+  booking.hold.created:
+    example:
+      id: evt_128
+      type: booking.hold.created
+      created_at: 2025-08-30T00:25:00Z
+      data: { hold_token: hld_123, property_id: prop_abc, check_in: 2025-09-10, check_out: 2025-09-14 }
+  booking.hold.released:
+    example:
+      id: evt_129
+      type: booking.hold.released
+      created_at: 2025-08-30T00:26:00Z
+      data: { hold_token: hld_123 }
+  booking.checkout.initiated:
+    example:
+      id: evt_130
+      type: booking.checkout.initiated
+      created_at: 2025-08-30T00:27:00Z
+      data: { hold_token: hld_123, booking_id: pre_456 }
+
+x-guidance:
+  versioning: |
+    Use URL versioning (`/v1`). Breaking changes become `/v2`. Add `Sunset` and `Deprecation` headers in responses when deprecating.
+  rate_limits: |
+    Default 1200 req/min per API key, enforced with `429` on burst. Include `X-RateLimit-*` headers.
+  caching: |
+    Strongly encourage CDN caching for `/properties` and `/search` with `ETag`/`Last-Modified`. Availability and quote endpoints are uncacheable.
+  privacy_security: |
+    No guest PII or owner bank details are ever exposed. Address masking returns `public_address` and `public_coordinates` (coordinates rounded to `mask_precision` decimals). For full address, keep `address_masking=false`.
+  image_transforms: |
+    When `img_*` params are present, image URLs are proxied via a signed CDN and transformed (size/fit/quality/DPR). The original URLs remain canonical for cache keys.
+  referrals: |
+    `ref_code` accepted on `/rates/quote` and `/bookings/hold`. It is embedded into `hold_token` and propagated to checkout. Use `/referrals/validate` for pre-checks.
+  bookings_flow: |
+    1) GET `/rates/quote` (optional) → 2) POST `/bookings/hold` → 3) POST `/bookings/confirm` to receive `booking_redirect_url` → 4) Redirect user to hosted checkout (owner-branded, primary engine). All PII & payments happen on hosted checkout.
+  compliance: |
+    GST flags are exposed via `tax_info`. Currency is per-property default unless overridden by consumer settings.
